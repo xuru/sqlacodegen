@@ -8,7 +8,10 @@ from sqlalchemy.schema import MetaData
 import pkg_resources
 
 from sqlacodegen.codegen import CodeGenerator
+from sqlalchemy_utils.types.ltree import LtreeType
+from sqlalchemy.dialects.postgresql.base import ischema_names
 
+ischema_names['ltree'] = LtreeType
 
 def main():
     parser = argparse.ArgumentParser(description='Generates SQLAlchemy model code from an existing database.')
