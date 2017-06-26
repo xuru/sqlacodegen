@@ -291,7 +291,7 @@ class ManyToManyRelationship(Relationship):
         super(ManyToManyRelationship, self).__init__(source_cls, target_cls)
 
         prefix = (assocation_table.schema + '.') if assocation_table.schema else ''
-        self.kwargs['secondary'] = repr(prefix + assocation_table.name)
+        self.kwargs['secondary'] = 't_{}'.format(prefix + assocation_table.name)
         constraints = [c for c in assocation_table.constraints
                        if isinstance(c, ForeignKeyConstraint)]
         constraints.sort(key=_get_constraint_sort_key)
@@ -673,7 +673,7 @@ class CodeGenerator(object):
 
     def render(self, outfile=sys.stdout):
         rendered_models = []
-        for model in self.models:
+        for model in sorted(self.models, key=lambda model: isinstance(model, self.class_model)):
             if isinstance(model, self.class_model):
                 rendered_models.append(self.render_class(model))
             elif isinstance(model, self.table_model):
