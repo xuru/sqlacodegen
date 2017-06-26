@@ -261,7 +261,7 @@ class ManyToManyRelationship(Relationship):
     def __init__(self, source_cls, target_cls, assocation_table):
         super(ManyToManyRelationship, self).__init__(source_cls, target_cls)
 
-        self.kwargs['secondary'] = repr(assocation_table.name)
+        self.kwargs['secondary'] = 't_{}'.format(assocation_table.name)
         constraints = [c for c in assocation_table.constraints if isinstance(c, ForeignKeyConstraint)]
         constraints.sort(key=_get_constraint_sort_key)
         colname = _get_column_names(constraints[1])[0]
@@ -337,7 +337,7 @@ class CodeGenerator(object):
                 table.indexes.clear()
 
             if noconstraints:
-                table.constraints = set([table.primary_key])
+                table.constraints = {table.primary_key}
                 table.foreign_keys.clear()
                 for col in table.columns:
                     col.foreign_keys.clear()
@@ -474,10 +474,10 @@ class CodeGenerator(object):
         kwarg = []
         is_sole_pk = column.primary_key and len(column.table.primary_key) == 1
         dedicated_fks = [c for c in column.foreign_keys if len(c.constraint.columns) == 1]
-        is_unique = any(isinstance(c, UniqueConstraint) and set(c.columns) == set([column])
+        is_unique = any(isinstance(c, UniqueConstraint) and set(c.columns) == {column}
                         for c in column.table.constraints)
-        is_unique = is_unique or any(i.unique and set(i.columns) == set([column]) for i in column.table.indexes)
-        has_index = any(set(i.columns) == set([column]) for i in column.table.indexes)
+        is_unique = is_unique or any(i.unique and set(i.columns) == {column} for i in column.table.indexes)
+        has_index = any(set(i.columns) == {column} for i in column.table.indexes)
         server_default = None
 
         # Render the column type if there are no foreign keys on it or any of them points back to itself
@@ -600,7 +600,7 @@ class CodeGenerator(object):
 
     def render(self, outfile=sys.stdout):
         rendered_models = []
-        for model in self.models:
+        for model in sorted(self.models, key=lambda model: isinstance(model, self.class_model)):
             if isinstance(model, self.class_model):
                 rendered_models.append(self.render_class(model))
             elif isinstance(model, self.table_model):
