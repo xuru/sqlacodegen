@@ -288,16 +288,25 @@ class CodeGenerator(object):
 # coding: utf-8
 {imports}
 
+{make_versioned_call}
+
 {metadata_declarations}
 
 
-{models}"""
+{models}
+
+{configure_mappers_call}
+"""
 
     def __init__(self, metadata, noindexes=False, noconstraints=False, nojoined=False, noinflect=False,
                  noclasses=False, indentation='    ', model_separator='\n\n',
                  ignored_tables=('alembic_version', 'migrate_version'), table_model=ModelTable, class_model=ModelClass,
-                 template=None):
+                 template=None, audited=None, audit_all=False):
         super(CodeGenerator, self).__init__()
+        if audited is None:
+            audited = {}
+        self.audited = audited
+        self.audit_all = audit_all
         self.metadata = metadata
         self.noindexes = noindexes
         self.noconstraints = noconstraints
@@ -327,6 +336,11 @@ class CodeGenerator(object):
         # Iterate through the tables and create model classes when possible
         self.models = []
         self.collector = ImportCollector()
+
+        if self.audit_all or self.audited:
+            self.collector.add_literal_import('sqlalchemy_continuum', 'make_versioned')
+            self.collector.add_literal_import('sqlalchemy.orm','configure_mappers')
+
         classes = {}
         for table in sorted(metadata.tables.values(), key=lambda t: (t.schema or '', t.name)):
             # Support for Alembic and sqlalchemy-migrate -- never expose the schema version tables
@@ -548,6 +562,8 @@ class CodeGenerator(object):
 
     def render_class(self, model):
         rendered = 'class {0}({1}):\n'.format(model.name, model.parent_name)
+        if self.audit_all or model.table.name in self.audited:
+            rendered += '{0}__versioned__ = {1}\n'.format(self.indentation, '{}')
         rendered += '{0}__tablename__ = {1!r}\n'.format(self.indentation, model.table.name)
 
         # Render constraints and indexes as __table_args__
@@ -607,6 +623,8 @@ class CodeGenerator(object):
                 rendered_models.append(self.render_table(model))
 
         output = self.template.format(imports=self.render_imports(),
+                                      make_versioned_call='make_versioned(user_cls=None)' if self.audit_all or self.audited else '',
+                                      configure_mappers_call='configure_mappers()' if self.audit_all or self.audited else '',
                                       metadata_declarations=self.render_metadata_declarations(),
                                       models=self.model_separator.join(rendered_models).rstrip('\n'))
         print(output, file=outfile)
