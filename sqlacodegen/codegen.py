@@ -155,11 +155,12 @@ class ModelTable(Model):
 class ModelClass(Model):
     parent_name = 'Base'
 
-    def __init__(self, table, association_tables, inflect_engine, detect_joined):
+    def __init__(self, table, association_tables, inflect_engine, detect_joined, back_populate=()):
         super(ModelClass, self).__init__(table)
         self.name = self._tablename_to_classname(table.name, inflect_engine)
         self.children = []
         self.attributes = OrderedDict()
+        self.back_populate = back_populate
 
         # Assign attribute names for columns
         for column in table.columns:
@@ -180,10 +181,17 @@ class ModelClass(Model):
         # Add many-to-many relationships
         for association_table in association_tables:
             fk_constraints = [c for c in association_table.constraints if isinstance(c, ForeignKeyConstraint)]
-            fk_constraints.sort(key=_get_constraint_sort_key)
-            target_cls = self._tablename_to_classname(fk_constraints[1].elements[0].column.table.name, inflect_engine)
-            relationship_ = ManyToManyRelationship(self.name, target_cls, association_table)
-            self._add_attribute(relationship_.preferred_name, relationship_)
+            fk_table_names = [fk_constraint.elements[0].column.table.name
+                              for fk_constraint in fk_constraints
+                              if fk_constraint.elements[0].column.table.name != self.table.name]
+            if fk_table_names:
+                target_cls = self._tablename_to_classname(fk_table_names[0], inflect_engine)
+                relationship_ = ManyToManyRelationship(self.name,
+                                                       target_cls,
+                                                       association_table,
+                                                       inflect_engine,
+                                                       back_populate=association_table.name in self.back_populate)
+                self._add_attribute(relationship_.preferred_name, relationship_)
 
     @staticmethod
     def _tablename_to_classname(tablename, inflect_engine):
@@ -258,15 +266,32 @@ class ManyToOneRelationship(Relationship):
 
 
 class ManyToManyRelationship(Relationship):
-    def __init__(self, source_cls, target_cls, assocation_table):
+    def __init__(self, source_cls, target_cls, assocation_table, inflect_engine, back_populate=True):
         super(ManyToManyRelationship, self).__init__(source_cls, target_cls)
 
+        self._inflect_engine = inflect_engine
         self.kwargs['secondary'] = 't_{}'.format(assocation_table.name)
         constraints = [c for c in assocation_table.constraints if isinstance(c, ForeignKeyConstraint)]
-        constraints.sort(key=_get_constraint_sort_key)
         colname = _get_column_names(constraints[1])[0]
-        tablename = constraints[1].elements[0].column.table.name
-        self.preferred_name = tablename if not colname.endswith('_id') else colname[:-3] + 's'
+
+        target_tablenames, target_colnames = \
+            zip(*[(constraint_a.elements[0].column.table.name,
+                   constraint_b.column_keys[0])
+                  for constraint_a, constraint_b in zip(constraints, constraints)
+                  if ModelClass._tablename_to_classname(constraint_a.elements[0].column.table.name,
+                                                        self._inflect_engine) != source_cls])
+        source_tablenames, source_colnames = \
+            zip(*[(constraint_a.elements[0].column.table.name,
+                   constraint_b.column_keys[0])
+                  for constraint_a, constraint_b in zip(constraints, constraints)
+                  if ModelClass._tablename_to_classname(constraint_a.elements[0].column.table.name,
+                                                        self._inflect_engine) == source_cls])
+        if target_tablenames:
+            self.preferred_name = target_tablenames[0] \
+                if not target_colnames[0].endswith('_id') else target_colnames[0][:-3] + 's'
+            if back_populate:
+                self.kwargs['back_populates'] = "'{}'".format(source_tablenames[0] \
+                    if not source_colnames[0].endswith('_id') else source_colnames[0][:-3] + 's')
 
         # Handle self referential relationships
         if source_cls == target_cls:
@@ -330,8 +355,13 @@ class CodeGenerator(object):
             fk_constraints = [constr for constr in table.constraints if isinstance(constr, ForeignKeyConstraint)]
             if len(fk_constraints) == 2 and all(col.foreign_keys for col in table.columns):
                 association_tables.add(table.name)
-                tablename = sorted(fk_constraints, key=_get_constraint_sort_key)[0].elements[0].column.table.name
-                links[tablename].append(table)
+                if table.name == 'user_role':
+                    tablenames = [fk_constraint.elements[0].column.table.name for fk_constraint in fk_constraints]
+                    for tablename in tablenames:
+                        links[tablename].append(table)
+                else:
+                    tablename = sorted(fk_constraints, key=_get_constraint_sort_key)[0].elements[0].column.table.name
+                    links[tablename].append(table)
 
         # Iterate through the tables and create model classes when possible
         self.models = []
@@ -340,6 +370,9 @@ class CodeGenerator(object):
         if self.audit_all or self.audited:
             self.collector.add_literal_import('sqlalchemy_continuum', 'make_versioned')
             self.collector.add_literal_import('sqlalchemy.orm','configure_mappers')
+
+        self.collector.add_literal_import('flask_security', 'UserMixin')
+        self.collector.add_literal_import('flask_security', 'RoleMixin')
 
         classes = {}
         for table in sorted(metadata.tables.values(), key=lambda t: (t.schema or '', t.name)):
@@ -385,7 +418,12 @@ class CodeGenerator(object):
             if noclasses or not table.primary_key or table.name in association_tables:
                 model = self.table_model(table)
             else:
-                model = self.class_model(table, links[table.name], self.inflect_engine, not nojoined)
+                if table.name in ('user', 'role'):
+                    back_populate = {'user_role'}
+                else:
+                    back_populate = {}
+
+                model = self.class_model(table, links[table.name], self.inflect_engine, not nojoined, back_populate)
                 classes[model.name] = model
 
             self.models.append(model)
@@ -561,7 +599,12 @@ class CodeGenerator(object):
         return rendered.rstrip('\n,') + '\n)\n'
 
     def render_class(self, model):
-        rendered = 'class {0}({1}):\n'.format(model.name, model.parent_name)
+        if model.name == 'User':
+            rendered = 'class {0}({1}, {2}):\n'.format(model.name, model.parent_name, 'UserMixin')
+        elif model.name == 'Role':
+            rendered = 'class {0}({1}, {2}):\n'.format(model.name, model.parent_name, 'RoleMixin')
+        else:
+            rendered = 'class {0}({1}):\n'.format(model.name, model.parent_name)
         if self.audit_all or model.table.name in self.audited:
             rendered += '{0}__versioned__ = {1}\n'.format(self.indentation, '{}')
         rendered += '{0}__tablename__ = {1!r}\n'.format(self.indentation, model.table.name)
@@ -582,8 +625,11 @@ class CodeGenerator(object):
         if model.schema:
             table_kwargs['schema'] = model.schema
 
-        kwargs_items = ', '.join('{0!r}: {1!r}'.format(key, table_kwargs[key]) for key in table_kwargs)
-        kwargs_items = '{{{0}}}'.format(kwargs_items) if kwargs_items else None
+        def _get_kwargs_repr(kwargs):
+            kwargs_items = ', '.join('{0!r}: {1!r}'.format(key, kwargs[key]) for key in kwargs)
+            return '{{{0}}}'.format(kwargs_items) if kwargs_items else None
+
+        kwargs_items = _get_kwargs_repr(table_kwargs)
         if table_kwargs and not table_args:
             rendered += '{0}__table_args__ = {1}\n'.format(self.indentation, kwargs_items)
         elif table_args:
@@ -593,6 +639,15 @@ class CodeGenerator(object):
                 table_args[0] += ','
             table_args_joined = ',\n{0}{0}'.format(self.indentation).join(table_args)
             rendered += '{0}__table_args__ = (\n{0}{0}{1}\n{0})\n'.format(self.indentation, table_args_joined)
+
+        # Mapper args
+        mapper_kwargs = {}
+        if model.name == 'User':
+            mapper_kwargs['polymorphic_on'] = 'type'
+
+        kwargs_items = _get_kwargs_repr(mapper_kwargs)
+        if mapper_kwargs:
+            rendered += '{0}__mapper_args__ = {1}'.format(self.indentation, kwargs_items)
 
         # Render columns
         rendered += '\n'
