@@ -43,10 +43,10 @@ setup(
     install_requires=(
         'SQLAlchemy >= 0.6.0',
         'inflect >= 0.2.0',
-        'sqlalchemy-utils == 0.32.14'
+        'sqlalchemy-utils >= 0.32.14'
     ),
     extras_require={
-        ':python_version == "2.6"': ['argparse']
+        ':python_version >= "3.6"': ['argparse']
     },
     zip_safe=False,
     entry_points={
