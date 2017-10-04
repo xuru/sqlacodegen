@@ -155,7 +155,7 @@ class ModelTable(Model):
 class ModelClass(Model):
     parent_name = 'Base'
 
-    def __init__(self, table, association_tables, inflect_engine, detect_joined, back_populate=()):
+    def __init__(self, table, association_tables, inflect_engine, detect_joined, back_populate=(), one_to_many_constraints=()):
         super(ModelClass, self).__init__(table)
         self.name = self._tablename_to_classname(table.name, inflect_engine)
         self.children = []
@@ -175,7 +175,7 @@ class ModelClass(Model):
                         set(_get_column_names(constraint)) == pk_column_names):
                     self.parent_name = target_cls
                 else:
-                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine)
+                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine, backref=bool(self.name == 'Deal' and target_cls == 'Customer'))
                     self._add_attribute(relationship_.preferred_name, relationship_)
 
         # Add many-to-many relationships
@@ -234,7 +234,7 @@ class Relationship(object):
 
 
 class ManyToOneRelationship(Relationship):
-    def __init__(self, source_cls, target_cls, constraint, inflect_engine):
+    def __init__(self, source_cls, target_cls, constraint, inflect_engine, backref=False):
         super(ManyToOneRelationship, self).__init__(source_cls, target_cls)
 
         column_names = _get_column_names(constraint)
@@ -250,6 +250,8 @@ class ManyToOneRelationship(Relationship):
                set(col.name for col in c.columns) == set(column_names)
                for c in constraint.table.constraints):
             self.kwargs['uselist'] = 'False'
+        elif backref:
+            self.kwargs['backref'] = "'{}s'".format(source_cls.lower())
 
         # Handle self referential relationships
         if source_cls == target_cls:
@@ -423,7 +425,18 @@ class CodeGenerator(object):
                 else:
                     back_populate = {}
 
-                model = self.class_model(table, links[table.name], self.inflect_engine, not nojoined, back_populate)
+                if table.name == 'customer':
+                    one_to_many_constraints = list(constraint for constraint in metadata.tables['upshot.deal'].constraints
+                                                   if 'customer_id' in constraint.columns.keys())
+                else:
+                    one_to_many_constraints = ()
+
+                model = self.class_model(table,
+                                         links[table.name],
+                                         self.inflect_engine,
+                                         not nojoined,
+                                         back_populate,
+                                         one_to_many_constraints)
                 classes[model.name] = model
 
             self.models.append(model)
