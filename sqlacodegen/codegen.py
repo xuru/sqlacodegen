@@ -175,7 +175,8 @@ class ModelClass(Model):
                         set(_get_column_names(constraint)) == pk_column_names):
                     self.parent_name = target_cls
                 else:
-                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine, backref=bool(self.name == 'Deal' and target_cls == 'Customer'))
+                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine, backref=bool(
+                        (self.name == 'Deal' and target_cls == 'Customer') or (self.name == 'CustomerNeed' and target_cls == 'Deal')))
                     self._add_attribute(relationship_.preferred_name, relationship_)
 
         # Add many-to-many relationships
