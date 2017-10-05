@@ -155,7 +155,7 @@ class ModelTable(Model):
 class ModelClass(Model):
     parent_name = 'Base'
 
-    def __init__(self, table, association_tables, inflect_engine, detect_joined, back_populate=(), one_to_many_constraints=()):
+    def __init__(self, table, association_tables, inflect_engine, detect_joined, back_populate=(), backrefs=()):
         super(ModelClass, self).__init__(table)
         self.name = self._tablename_to_classname(table.name, inflect_engine)
         self.children = []
@@ -175,8 +175,9 @@ class ModelClass(Model):
                         set(_get_column_names(constraint)) == pk_column_names):
                     self.parent_name = target_cls
                 else:
-                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine, backref=bool(
-                        (self.name == 'Deal' and target_cls == 'Customer') or (self.name == 'CustomerNeed' and target_cls == 'Deal')))
+                    backref = [(tgt_name, br_name) for tgt_name, br_name in backrefs if tgt_name == target_cls]
+                    relationship_ = ManyToOneRelationship(self.name, target_cls, constraint, inflect_engine,
+                                                          backref=backref[0] if len(backref) > 0 else ())
                     self._add_attribute(relationship_.preferred_name, relationship_)
 
         # Add many-to-many relationships
@@ -235,7 +236,7 @@ class Relationship(object):
 
 
 class ManyToOneRelationship(Relationship):
-    def __init__(self, source_cls, target_cls, constraint, inflect_engine, backref=False):
+    def __init__(self, source_cls, target_cls, constraint, inflect_engine, backref=()):
         super(ManyToOneRelationship, self).__init__(source_cls, target_cls)
 
         column_names = _get_column_names(constraint)
@@ -251,8 +252,9 @@ class ManyToOneRelationship(Relationship):
                set(col.name for col in c.columns) == set(column_names)
                for c in constraint.table.constraints):
             self.kwargs['uselist'] = 'False'
-        elif backref:
-            self.kwargs['backref'] = "'{}s'".format(source_cls.lower())
+        elif len(backref) == 2:
+            _, backref_name = backref
+            self.kwargs['backref'] = "'{}'".format(backref_name)
 
         # Handle self referential relationships
         if source_cls == target_cls:
@@ -426,18 +428,21 @@ class CodeGenerator(object):
                 else:
                     back_populate = {}
 
-                if table.name == 'customer':
-                    one_to_many_constraints = list(constraint for constraint in metadata.tables['upshot.deal'].constraints
-                                                   if 'customer_id' in constraint.columns.keys())
+                if table.name == 'deal':
+                    backrefs = [('Customer', 'deals')]
+                elif table.name == 'customer_need':
+                    backrefs = [('Deal', 'customer_need')]
+                elif table.name in {'customer_string', 'customer_flag', 'customer_float', 'customer_int'}:
+                    backrefs = [('Customer', '{}s'.format(table.name.split('_')[1]))]
                 else:
-                    one_to_many_constraints = ()
+                    backrefs = ()
 
                 model = self.class_model(table,
                                          links[table.name],
                                          self.inflect_engine,
                                          not nojoined,
                                          back_populate,
-                                         one_to_many_constraints)
+                                         backrefs)
                 classes[model.name] = model
 
             self.models.append(model)
