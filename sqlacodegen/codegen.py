@@ -384,7 +384,7 @@ class CodeGenerator(object):
         for table in sorted(metadata.tables.values(), key=lambda t: (t.schema or '', t.name)):
             # Support for Alembic and sqlalchemy-migrate -- never expose the schema version tables
             if table.name in self.ignored_tables or (
-                table.name.endswith('_version') and table.name[-len('_version')] in self.audited):
+                table.name.endswith('_version') and table.name[:-len('_version')] in self.audited):
                 continue
 
             if noindexes:
