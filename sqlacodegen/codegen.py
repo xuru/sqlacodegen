@@ -336,7 +336,10 @@ class CodeGenerator(object):
         super(CodeGenerator, self).__init__()
         if audited is None:
             audited = {}
-        self.audited = audited
+        if audit_all:
+            self.audited = [table.name for table in metadata.tables]
+        else:
+            self.audited = audited
         self.audit_all = audit_all
         self.metadata = metadata
         self.noindexes = noindexes
@@ -384,7 +387,9 @@ class CodeGenerator(object):
         for table in sorted(metadata.tables.values(), key=lambda t: (t.schema or '', t.name)):
             # Support for Alembic and sqlalchemy-migrate -- never expose the schema version tables
             if table.name in self.ignored_tables or (
-                table.name.endswith('_version') and table.name[:-len('_version')] in self.audited):
+                table.name.endswith('_version') and table.name[:-len('_version')] in self.audited) or (
+                self.audited and table.name == 'transaction'
+            ):
                 continue
 
             if noindexes:
