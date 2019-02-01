@@ -1,6 +1,7 @@
 from __future__ import unicode_literals, division, print_function, absolute_import
 
 import argparse
+import importlib
 import io
 import sys
 
@@ -9,6 +10,14 @@ from sqlalchemy.engine import create_engine
 from sqlalchemy.schema import MetaData
 
 from sqlacodegen.codegen import CodeGenerator
+
+
+def import_dialect_specificities(engine):
+    dialect_name = '.' + engine.dialect.name
+    try:
+        importlib.import_module(dialect_name, 'sqlacodegen.dialects')
+    except ImportError:
+        pass
 
 
 def main():
@@ -41,6 +50,7 @@ def main():
 
     # Use reflection to fill in the metadata
     engine = create_engine(args.url)
+    import_dialect_specificities(engine)
     metadata = MetaData(engine)
     tables = args.tables.split(',') if args.tables else None
     metadata.reflect(engine, args.schema, not args.noviews, tables)
@@ -50,3 +60,4 @@ def main():
     generator = CodeGenerator(metadata, args.noindexes, args.noconstraints, args.nojoined,
                               args.noinflect, args.noclasses)
     generator.render(outfile)
+
